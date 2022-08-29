@@ -1,0 +1,475 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >-
+  Master template to create the Elastic Disaster Recovery workshop. Also, you are
+  solely responsible for complying with the license terms for the software
+  downloaded and installed by this template. By creating a stack from this
+  template, you are agreeing to such terms.
+
+#Parameters
+Parameters:
+  DomainName:
+    Description: >-
+      The fully qualified name for the source VPC, such as onpremsim.env. The
+      name doesn't need to be publicly resolvable; it will resolve inside your
+      VPC only.
+    Type: String
+    MinLength: '5'
+    MaxLength: '16'
+    Default: onpremsim.env
+  AdminPassword:
+    Description: >-
+      The password for the Bastion Administrator. must contain exactly 8
+      characters. please use alphanumeric+special characters. at least one
+      number, one upper case, one lower case and one special (#@$)
+    NoEcho: 'true'
+    Type: String
+    MinLength: '8'
+    MaxLength: '8'
+    AllowedPattern: '^(?=[a-zA-Z0-9#@$?]{8,}$)(?=.*?[a-z])(?=.*?[A-Z])(?=.*?[0-9]).*'
+    ConstraintDescription: >-
+      must contain exactly 8 characters. please use alphanumeric+special
+      characters. at least one number, one upper case, one lower case and one
+      special (#@$)
+    Default: Adm1nP@s
+  RootPassword:
+    NoEcho: 'true'
+    Description: >-
+      SSH password for user 'user'. This user has sudo power. must contain
+      exactly 8 characters. please use only alphanumeric characters.
+    Type: String
+    MinLength: '8'
+    MaxLength: '8'
+    AllowedPattern: '[a-zA-Z0-9]*'
+    ConstraintDescription: >-
+      must contain exactly 8 characters. please use only alphanumeric
+      characters.
+    Default: SshPass1
+  SourceS3Bucket:
+    Description: S3 Bucket with CFN stack files
+    Type: String
+    Default: ee-assets-prod-us-east-1
+  SourceS3Path:
+    Description: S3 Path with CFN stack files
+    Type: String
+    Default: modules/migration-baseinfra/v4
+  EC2ModelLinux:
+    Description: Model of EC2 Servers in the source environment - Linux
+    Type: String
+    AllowedValues:
+      - t3.nano
+      - t3.micro
+      - t3.small
+      - t3.medium
+    Default: t3.small
+  EC2ModelBastion:
+    Description: Model of EC2 Servers in the source environment - Windows Bastion
+    Type: String
+    AllowedValues:
+      - t3.micro
+      - t3.small
+      - t3.medium
+    Default: t3.medium
+  SourceCidrForRDP:
+    Description: >-
+      IP Cidr from which you are likely to RDP into the instances. You can add
+      rules later by modifying the created security groups e.g. 54.32.98.160/32
+    Type: String
+    MinLength: '9'
+    MaxLength: '18'
+    Default: 0.0.0.0/0
+    AllowedPattern: '^([0-9]+\.){3}[0-9]+\/[0-9]+$'
+  LaunchBastion:
+    Description: Launch Bastion Server
+    Default: 'TRUE'
+    Type: String
+    AllowedValues:
+      - 'TRUE'
+      - 'FALSE'
+  LaunchWordpress:
+    Description: Launch Wordpress App
+    Default: 'TRUE'
+    Type: String
+    AllowedValues:
+      - 'TRUE'
+      - 'FALSE'
+  LaunchOFBiz:
+    Description: Launch OFBiz App
+    Default: 'FALSE'
+    Type: String
+    AllowedValues:
+      - 'TRUE'
+      - 'FALSE'
+  LaunchMF:
+    Description: Launch Migration Factory
+    Default: 'FALSE'
+    Type: String
+    AllowedValues:
+      - 'TRUE'
+      - 'FALSE'
+  Track:
+    Description: >-
+      Track statistics about this workshop. The information collected are:
+      account number, region and timestamp of when this cloudformation was
+      executed
+    Default: 'FALSE'
+    Type: String
+    AllowedValues:
+      - 'TRUE'
+      - 'FALSE'
+  CreateIAM:
+    Description: Create IAM and CE credentials
+    Default: 'TRUE'
+    Type: String
+    AllowedValues:
+      - 'TRUE'
+      - 'FALSE'
+  WindowsLastestAmiID:
+    Description: The latest AMI ID for Windows 2019 from Amazon
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: /aws/service/ami-windows-latest/Windows_Server-2019-English-Full-Base
+
+#Metadata
+Metadata:
+  'AWS::CloudFormation::Interface':
+    ParameterGroups:
+      - Label:
+          default: Source Server - Configuration
+        Parameters:
+          - AdminPassword
+          - RootPassword
+          - EC2ModelBastion
+          - EC2ModelLinux
+      - Label:
+          default: Deploy nested stacks
+        Parameters:
+          - LaunchMF
+          - CreateIAM
+          - LaunchOFBiz
+          - LaunchWordpress
+          - LaunchBastion
+      - Label:
+          default: Networking
+        Parameters:
+          - DomainName
+          - SourceCidrForRDP
+      - Label:
+          default: CloudFormation Stack
+        Parameters:
+          - SourceS3Bucket
+          - SourceS3Path
+          - Track
+
+#Conditions
+Conditions:
+  CreateBastion: !Equals 
+    - !Ref LaunchBastion
+    - 'TRUE'
+  CreateWordpress: !Equals 
+    - !Ref LaunchWordpress
+    - 'TRUE'
+  CreateOFBiz: !Equals 
+    - !Ref LaunchOFBiz
+    - 'TRUE'
+  DeployMF: !Equals 
+    - !Ref LaunchMF
+    - 'TRUE'
+  DeployIAM: !Equals 
+    - !Ref CreateIAM
+    - 'TRUE'
+  MIDTrack: !Equals 
+    - !Ref Track
+    - 'TRUE'
+
+
+Resources:
+  SOURCENETWORK:
+    Type: 'AWS::CloudFormation::Stack'
+    Properties:
+      TemplateURL: !Sub https://${SourceS3Bucket}.s3.amazonaws.com/${SourceS3Path}/SOURCE_NETWORK.yaml
+      Parameters:
+        DomainName: !Ref DomainName
+      Tags:
+        - Key: Env
+          Value: MID-SOURCE
+        - Key: Stack
+          Value: SOURCENETWORK
+
+
+  CENETWORK:
+    Type: 'AWS::CloudFormation::Stack'
+    Properties:
+      TemplateURL: https://s3.amazonaws.com/ee-assets-prod-us-east-1/modules/migration-cloudendure/v2/cfn/CE_NETWORK.json
+      Tags:
+        - Key: Env
+          Value: MID-SOURCE
+        - Key: Stack
+          Value: CENETWORK
+
+  CEIAM:
+    Type: 'AWS::CloudFormation::Stack'
+    Condition: DeployIAM
+    Properties:
+      TemplateURL: !Sub https://${SourceS3Bucket}.s3.amazonaws.com/${SourceS3Path}/IAM_CE.yaml
+      Tags:
+        - Key: Env
+          Value: MID-SOURCE
+        - Key: Stack
+          Value: CEIAM
+  
+  BastionEIP:
+      Type: 'AWS::EC2::EIP'
+      Properties:
+        InstanceId: !Ref MIDBastion
+
+  BastionSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Enable RDP
+      VpcId: !GetAtt
+        - SOURCENETWORK
+        - Outputs.VPCSource
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3389
+          ToPort: 3389
+          CidrIp: !Ref SourceCidrForRDP
+        - IpProtocol: icmp
+          FromPort: 8
+          ToPort: -1
+          CidrIp: 192.168.0.0/16
+
+  MIDBastion:
+        Type: 'AWS::EC2::Instance'
+        Metadata:
+          'AWS::CloudFormation::Init':
+            configSets:
+              bastion_install:
+                - install_cfn
+                - install_apps
+            install_cfn:
+              files:
+                'c:\cfn\cfn-hup.conf':
+                  content: !Sub | 
+                      [main]
+                      stack=${AWS::StackId}
+                      region=${AWS::Region}
+                'c:\cfn\hooks.d\cfn-auto-reloader.conf':
+                  content: !Sub | 
+                        [cfn-auto-reloader-hook]
+                        triggers=post.update
+                        path=Resources.MIDBastion.Metadata.AWS::CloudFormation::Init
+                        action=cfn-init.exe -v -s ${AWS::StackId} -r MIDBastion --configsets bastion_install --region ${AWS::Region}
+              services:
+                windows:
+                  cfn-hup:
+                    enabled: 'true'
+                    ensureRunning: 'true'
+                    files:
+                      - 'c:\cfn\cfn-hup.conf'
+                      - 'c:\cfn\hooks.d\cfn-auto-reloader.conf'
+            install_apps:
+              files:
+                'c:\cfn\scripts\retry-command.ps1':
+                  content: !Join
+                    - ''
+                    - - >-
+                        function Retry-Command {
+                          [CmdletBinding()]
+                          Param(
+                              [Parameter(Position=0, Mandatory=$true)]
+                              [scriptblock]$ScriptBlock,
+                              [Parameter(Position=1, Mandatory=$false)]
+                              [int]$Maximum = 5,
+                              [Parameter(Position=2, Mandatory=$false)]
+                              [int]$Delay = 100
+                          )
+                          Begin {
+                              $cnt = 0
+                          }
+                          Process {
+                              do {
+                                  $cnt++
+                                  try {
+                                      $ScriptBlock.Invoke()
+                                      return
+                                  } catch {
+                                      Write-Error $_.Exception.InnerException.Message -ErrorAction Continue
+                                      Start-Sleep -Milliseconds $Delay
+                                  }
+                              } while ($cnt -lt $Maximum)
+
+                              # Throw an error after $Maximum unsuccessful invocations. Doesn't need
+                              # a condition, since the function returns upon successful invocation.
+                              throw 'Execution failed.'
+                          }
+                        }    
+
+                'c:\cfn\scripts\downloadCEMF.ps1': 
+                  content: !Join
+                    - ''
+                    - - >-
+                        Import-module c:\cfn\scripts\retry-command.ps1 -Force
+
+                        Retry-Command -ScriptBlock {
+                          $Path = $env:TEMP; $Installer = "Migrations.zip";
+                          Invoke-WebRequest "https://ee-assets-prod-us-east-1.s3.amazonaws.com/modules/migration-baseinfra/v4/Migrations.zip" -OutFile $Path\$Installer;
+                          Expand-Archive -Path $Path\$Installer -DestinationPath c:\Migrations
+                          Remove-Item $Path\$Installer
+                        }
+
+                'c:\cfn\scripts\installchrome.ps1':
+                  content: !Sub | 
+                        Import-module c:\cfn\scripts\retry-command.ps1 -Force
+
+                        Retry-Command -ScriptBlock {
+                          $Path = $env:TEMP; $Installer = "chrome_installer.exe";
+                          Invoke-WebRequest "http://dl.google.com/chrome/install/375.126/chrome_installer.exe" -OutFile $Path\$Installer; 
+                          Start-Process -FilePath $Path\$Installer -Args "/silent /install" -Verb RunAs -Wait;
+                          Remove-Item $Path\$Installer
+                        }
+                
+                'c:\putty.reg':
+                  source: "https://ee-assets-prod-us-east-1.s3.amazonaws.com/modules/migration-baseinfra/v4/putty.reg"
+
+                'c:\cfn\scripts\installputty.ps1':
+                  content: !Sub |
+                        Import-module c:\cfn\scripts\retry-command.ps1 -Force
+
+                        Retry-Command -ScriptBlock {
+                          Invoke-WebRequest "https://the.earth.li/~sgtatham/putty/0.74/w64/putty-64bit-0.74-installer.msi" -OutFile c:\putty.msi; 
+                          Start-Process msiexec.exe -ArgumentList '/i c:\putty.msi /q' -Verb RunAs -Wait;
+                          Remove-Item c:\putty.msi
+                          New-Item -ItemType SymbolicLink -Path 'C:\Users\Administrator\Desktop\' -name 'Putty' -Value 'C:\Program Files\PuTTY\putty.exe'
+                          reg import c:\putty.reg
+                        }
+
+                'c:\cfn\scripts\installpython.ps1':
+                  content: !Sub | 
+                        Import-module c:\cfn\scripts\retry-command.ps1 -Force
+
+                        Retry-Command -ScriptBlock {
+                          Invoke-WebRequest "https://www.python.org/ftp/python/3.7.6/python-3.7.6.exe" -OutFile c:\python.exe; Start-Process c:\python.exe -ArgumentList '/quiet' -Verb RunAs -Wait; 
+                          Remove-Item c:\python.exe 
+                          [Environment]::SetEnvironmentVariable ;("C:\Users\Administrator\AppData\Local\Programs\Python\Python37-32\", $env:Path, [System.EnvironmentVariableTarget]::Machine)
+                          [Environment]::SetEnvironmentVariable ;("C:\Users\Administrator\AppData\Local\Programs\Python\Python37-32\Scripts\", $env:Path, [System.EnvironmentVariableTarget]::Machine) 
+                          py.exe -m pip install --upgrade pip 
+                          py.exe -m pip install requests 
+                          py.exe -m pip install paramiko 
+                          py.exe -m pip install boto3 
+                        }
+
+              commands:
+                0-downloadCEMF:
+                  command: 'powershell.exe c:\cfn\scripts\downloadCEMF.ps1'
+                  waitAfterCompletion: '5'
+                0-installchrome:
+                  command: 'powershell.exe c:\cfn\scripts\installchrome.ps1'
+                  waitAfterCompletion: '5'
+                0-installputty:
+                  command: 'powershell.exe c:\cfn\scripts\installputty.ps1'
+                  waitAfterCompletion: '5'
+                0-installpython:
+                  command: 'powershell.exe c:\cfn\scripts\installpython.ps1'
+                  waitAfterCompletion: '5'
+                0-desktopMSTSC:
+                  command: powershell.exe New-Item -ItemType SymbolicLink -Path 'C:\Users\Administrator\Desktop\' -name 'Microsoft Remote Desktop Client' -Value 'C:\windows\system32\mstsc.exe'
+                  waitAfterCompletion: '5'
+        Properties:
+          InstanceType: !Ref EC2ModelBastion
+          ImageId: !Ref WindowsLastestAmiID
+          NetworkInterfaces:
+            - GroupSet:
+                - !Ref BastionSecurityGroup
+              AssociatePublicIpAddress: true
+              DeviceIndex: '0'
+              DeleteOnTermination: true
+              SubnetId: !GetAtt
+                - SOURCENETWORK
+                - Outputs.SubnetSourcePublic
+          Tags:
+            - Key: Environment
+              Value: Source
+            - Key: Name
+              Value: MID-Bastion
+
+          UserData: 
+            Fn::Base64:
+              !Sub | 
+                <powershell>
+                  net user Administrator ${AdminPassword} 
+                  cfn-init.exe -v -s ${AWS::StackId} -r MIDBastion --configsets bastion_install --region ${AWS::Region}
+                  cfn-signal.exe -e %ERRORLEVEL% --stack ${AWS::StackId} --resource MIDBastion --region ${AWS::Region}
+                </powershell>
+
+  SOURCEWORDPRESS:
+    Type: 'AWS::CloudFormation::Stack'
+    Condition: CreateWordpress
+    Properties:
+      TemplateURL: !Sub https://${SourceS3Bucket}.s3.amazonaws.com/${SourceS3Path}/SOURCE_WORDPRESS.yaml
+      Parameters:
+        DomainName: !Ref DomainName
+        OnPremSimVPC: !GetAtt 
+          - SOURCENETWORK
+          - Outputs.VPCSource
+        OnPremSimSubnet1: !GetAtt 
+          - SOURCENETWORK
+          - Outputs.SubnetSourcePrivate
+        WEBInstanceType: !Ref EC2ModelLinux
+        DBPassword: !Ref RootPassword
+        RootPassword: !Ref RootPassword
+      Tags:
+        - Key: Env
+          Value: MID-SOURCE
+        - Key: Stack
+          Value: SOURCENETWORK
+
+  SOURCEOFBIZ:
+    Type: 'AWS::CloudFormation::Stack'
+    Condition: CreateOFBiz
+    Properties:
+      TemplateURL: !Sub https://${SourceS3Bucket}.s3.amazonaws.com/${SourceS3Path}/SOURCE_OFBiz.yaml
+      Parameters:
+        DomainName: !Ref DomainName
+        OnPremSimVPC: !GetAtt 
+          - SOURCENETWORK
+          - Outputs.VPCSource
+        OnPremSimSubnet1: !GetAtt 
+          - SOURCENETWORK
+          - Outputs.SubnetSourcePrivate
+        WEBInstanceType: !Ref EC2ModelLinux
+        DBPassword: !Ref RootPassword
+        RootPassword: !Ref RootPassword
+      Tags:
+        - Key: Env
+          Value: MID-SOURCE
+        - Key: Stack
+          Value: SOURCENETWORK
+
+  FACTORY:
+    Type: 'AWS::CloudFormation::Stack'
+    Condition: DeployMF
+    Properties:
+      TemplateURL: https://awsmigrationfactory.s3.amazonaws.com/template/migration-factory-p-multi-region.yaml
+      Tags:
+        - Key: Env
+          Value: MID-SOURCE
+        - Key: Stack
+          Value: FACTORY
+
+  Tracker:
+    Type: 'AWS::CloudFormation::Stack'
+    Condition: MIDTrack
+    Properties:
+      TemplateURL: !Sub https://${SourceS3Bucket}.s3.amazonaws.com/${SourceS3Path}/TRACKER.yaml
+      Parameters:
+        Source: SelfService
+      Tags:
+        - Key: Env
+          Value: MID-SOURCE
+        - Key: Stack
+          Value: MIDTrack
+
+Outputs:
+  BastionRDP:
+    Value: !Ref BastionEIP
+    Description: Bastion Host RDP Connection IP
